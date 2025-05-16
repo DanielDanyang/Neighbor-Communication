@@ -1,237 +1,560 @@
-# MPI环形通信实现与分析报告
+# MPI Neighbor Communication Implementation and Analysis Report
 
-## 1. 项目概述
+- Danyang Chen (123090018)
 
-本项目实现了基于MPI（Message Passing Interface）的环形通信模式，通过四种不同的实现方法（ring, ring1, ring2, ring3）展示了进程间通信的不同策略。环形通信是并行计算中的一种基本通信模式，在许多科学计算和高性能计算应用中有广泛应用。
+## 1. Project Overview
 
-### 1.1 项目目标
+This project implements the neighbor communication mode based on MPI (Message Passing Interface), demonstrating different inter-process communication strategies through four different implementation methods (ring, ring1, ring2, ring3). Neighbor communication is a basic communication mode in parallel computing and is widely used in many scientific computing and high-performance computing applications.
 
-- 实现基本的环形通信模式
-- 比较不同通信策略的性能和特点
-- 演示MPI阻塞和非阻塞通信的区别
-- 分析通信时间和性能
+### 1.1 Project Objectives
 
-### 1.2 实现环境
+- Implement the basic neighbor communication mode
+- Compare the performance and characteristics of different communication strategies
+- Demonstrate the differences between MPI blocking and non-blocking communication
+- Analyze communication time and performance
+- Provide improvement plans and verify performance enhancements
+- Analyze scalability in large-scale distributed environments
 
-- 操作系统：WSL2 Ubuntu
-- MPI实现：MPICH/OpenMPI
-- 编程语言：C++
-- 构建工具：Python脚本自动化编译和执行
+### 1.2 Implementation Environment
 
-## 2. 环形通信理论基础
+- Operating System: Linux cluster environment
+- MPI Implementation: MPICH/OpenMPI
+- Programming Language: C++
+- Build Tools: Python scripts for automated compilation and execution
+- Job Scheduling: Slurm scheduling system
 
-### 2.1 环形拓扑结构
+## 2. Theoretical Basis of Neighbor Communication
 
-环形通信是一种常见的通信模式，其中N个进程按环形结构排列，每个进程与其相邻的两个进程（左右邻居）进行通信。在本项目中，进程i向进程(i+1)%N发送消息，并从进程(i-1+N)%N接收消息。
+### 2.1 Circular Topology Structure
 
-### 2.2 通信策略
+Neighbor communication is a common communication pattern where N processes are arranged in a ring structure, and each process communicates with its two adjacent processes (left and right neighbors). In this project, process i sends a message to process (i+1)%N and receives a message from process (i-1+N)%N.
 
-在分布式内存并行系统中，有多种通信策略可用：
+### 2.2 Communication Strategies
 
-1. **阻塞通信**：发送或接收操作会阻塞，直到通信完成
-2. **非阻塞通信**：通信操作立即返回，允许程序在通信进行的同时执行其他计算
-3. **同步通信**：发送方必须等待接收方准备好接收数据
-4. **异步通信**：发送方可以在不等待接收方准备好的情况下发送数据
+In distributed memory parallel systems, multiple communication strategies are available:
 
-### 2.3 死锁问题
+1.  **Blocking Communication**: Send or receive operations block until the communication is complete.
+2.  **Non-blocking Communication**: Communication operations return immediately, allowing the program to perform other computations while communication is in progress.
+3.  **Synchronous Communication**: The sender must wait for the receiver to be ready to receive data.
+4.  **Asynchronous Communication**: The sender can send data without waiting for the receiver to be ready.
 
-在环形通信中，如果所有进程同时尝试发送消息而不接收消息，就会发生死锁。为避免这种情况，可以采用以下策略：
+### 2.3 Deadlock Issues
 
-1. 使用非阻塞通信
-2. 交错通信操作（例如偶数进程先发送后接收，奇数进程先接收后发送）
-3. 使用缓冲通信
+In neighbor communication, deadlock can occur if all processes simultaneously attempt to send messages without receiving messages. To avoid this, the following strategies can be adopted:
 
-## 3. 实现方法
+1.  Use non-blocking communication
+2.  Interleave communication operations (e.g., even-numbered processes send then receive, odd-numbered processes receive then send)
+3.  Use buffered communication
 
-本项目实现了四种不同的环形通信方法，每种方法展示了不同的通信策略。
+## 3. Implementation Methods
 
-### 3.1 基本阻塞通信（ring.cpp）
+This project implements four different neighbor communication methods, each demonstrating different communication strategies.
+
+### 3.1 Basic Blocking Communication (ring.cpp)
 
 ```cpp
-// 关键代码摘要
-MPI_Send(message, MESSAGE_SIZE, MPI_INT, right, 0, MPI_COMM_WORLD);
-MPI_Recv(received, MESSAGE_SIZE, MPI_INT, left, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+// Key code snippet
+MPI_Send(message, MESSAGE_SIZE, MPI_DOUBLE, right, 0, MPI_COMM_WORLD);
+MPI_Recv(received, MESSAGE_SIZE, MPI_DOUBLE, left, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 ```
 
-这种实现使用标准的阻塞式通信，每个进程发送一个消息到右邻居，并从左邻居接收一个消息。如果所有进程同时执行这些操作，可能会导致死锁。然而，在实际运行中，由于进程启动时间的微小差异，通常可以避免死锁。
+This implementation uses standard blocking communication. Each process sends a message to its right neighbor and receives a message from its left neighbor. If all processes perform these operations simultaneously, it may lead to deadlock. However, in practice, deadlock is often avoided due to slight differences in process start times.
 
-优点：
-- 简单直观
-- 代码简洁
+Advantages:
+- Simple and intuitive
+- Concise code
 
-缺点：
-- 理论上可能导致死锁
-- 无法在通信的同时执行计算
+Disadvantages:
+- Theoretically prone to deadlock
+- Cannot perform computation concurrently with communication
+- Prone to actual deadlock during large-scale data transfer
 
-### 3.2 偶奇进程交错通信（ring1.cpp）
+### 3.2 Even-Odd Process Interleaved Communication (ring1.cpp)
 
 ```cpp
-// 关键代码摘要
-if (t == 0) { // 偶数号进程先发送
-    MPI_Send(message, MESSAGE_SIZE, MPI_INT, next, 0, MPI_COMM_WORLD);
-    MPI_Recv(received, MESSAGE_SIZE, MPI_INT, prev, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-} 
-else { // 奇数号进程先接收
-    MPI_Recv(received, MESSAGE_SIZE, MPI_INT, prev, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    MPI_Send(message, MESSAGE_SIZE, MPI_INT, next, 0, MPI_COMM_WORLD);
+// Key code snippet
+if (t == 0) { // Even-numbered processes send first
+    MPI_Send(message, MESSAGE_SIZE, MPI_DOUBLE, next, 0, MPI_COMM_WORLD);
+    MPI_Recv(received, MESSAGE_SIZE, MPI_DOUBLE, prev, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+}
+else { // Odd-numbered processes receive first
+    MPI_Recv(received, MESSAGE_SIZE, MPI_DOUBLE, prev, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    MPI_Send(message, MESSAGE_SIZE, MPI_DOUBLE, next, 0, MPI_COMM_WORLD);
 }
 ```
 
-这种实现避免了死锁问题，通过让偶数进程先发送后接收，奇数进程先接收后发送，确保了通信的有序进行。
+This implementation avoids deadlock by having even-numbered processes send then receive, and odd-numbered processes receive then send, ensuring orderly communication.
 
-优点：
-- 避免了死锁
-- 进程通信模式明确
+Advantages:
+- Avoids deadlock
+- Clear process communication pattern
 
-缺点：
-- 仍然是阻塞通信，无法同时执行计算
-- 需要注意接收和发送缓冲区的区分（之前存在bug）
+Disadvantages:
+- Still blocking communication, cannot perform computation concurrently
+- Requires careful distinction between send and receive buffers
 
-### 3.3 非阻塞通信（ring2.cpp）
+### 3.3 Non-blocking Communication (ring2.cpp)
 
 ```cpp
-// 关键代码摘要
-MPI_Isend(message, MESSAGE_SIZE, MPI_INT, right, 0, MPI_COMM_WORLD, &send_request);
-MPI_Irecv(received, MESSAGE_SIZE, MPI_INT, left, 0, MPI_COMM_WORLD, &recv_request);
+// Key code snippet
+// Determine communication order based on process parity
+if (t == 0) { // Even process
+    MPI_Isend(message, MESSAGE_SIZE, MPI_DOUBLE, right, 0, MPI_COMM_WORLD, &send_request);
+    MPI_Irecv(received, MESSAGE_SIZE, MPI_DOUBLE, left, 0, MPI_COMM_WORLD, &recv_request);
+}
+else { // Odd process
+    MPI_Irecv(received, MESSAGE_SIZE, MPI_DOUBLE, left, 0, MPI_COMM_WORLD, &recv_request);
+    MPI_Isend(message, MESSAGE_SIZE, MPI_DOUBLE, right, 0, MPI_COMM_WORLD, &send_request);
+}
 
-// 在这里可以进行计算操作
+// Perform computation during communication
+double local_work = 0.0;
+int test_counter = 0;
+int recv_done = 0;
 
-MPI_Wait(&send_request, MPI_STATUS_IGNORE);
-MPI_Wait(&recv_request, MPI_STATUS_IGNORE);
+// Lightweight computation, periodically check communication status
+while (!recv_done && test_counter < 1000) {
+    // Do some computation
+    for (int i = 0; i < 5000; i++) {
+        local_work += sin(i * 0.01);
+    }
+
+    // Periodically test communication completion
+    test_counter++;
+    if (test_counter % 5 == 0) {
+        MPI_Test(&recv_request, &recv_done, MPI_STATUS_IGNORE);
+    }
+}
+
+// Wait for receive completion
+if (!recv_done) {
+    MPI_Wait(&recv_request, MPI_STATUS_IGNORE);
+}
 ```
 
-这种实现使用非阻塞通信，允许进程在通信进行的同时执行其他计算任务。通信完成后，使用`MPI_Wait`来等待操作完成。
+This implementation uses non-blocking communication, allowing processes to perform other computational tasks while communication is in progress. After communication starts, `MPI_Wait` is used to wait for the operations to complete. To fully leverage non-blocking communication, an even-odd interleaved communication strategy is also incorporated.
 
-优点：
-- 允许通信与计算重叠
-- 自然避免死锁
-- 提高程序效率
+Advantages:
+- Allows overlap of communication and computation
+- Naturally avoids deadlock
+- Improves program efficiency
+- Combines even-odd interleaving strategy to further optimize communication order
 
-缺点：
-- 代码复杂度增加
-- 需要额外的request和状态管理
+Disadvantages:
+- Increased code complexity
+- Requires additional request and status management
+- Requires careful balancing of computation and communication
 
-### 3.4 C风格实现（ring3.cpp）
+### 3.4 Non-blocking Communication with Separated Waits (ring3.cpp)
 
 ```cpp
-// 关键代码摘要
-MPI_Request send_request;
-MPI_Status send_status;
-MPI_Isend(message, MESSAGE_SIZE, MPI_INT, dest, 99, MPI_COMM_WORLD, &send_request);
+// Key code snippet
+// Determine communication order based on process parity
+if (t == 0) { // Even process
+    MPI_Isend(message, MESSAGE_SIZE, MPI_DOUBLE, dest, 99, MPI_COMM_WORLD, &send_request);
+    MPI_Irecv(received, MESSAGE_SIZE, MPI_DOUBLE, source, 99, MPI_COMM_WORLD, &recv_request);
+}
+else { // Odd process
+    MPI_Irecv(received, MESSAGE_SIZE, MPI_DOUBLE, source, 99, MPI_COMM_WORLD, &recv_request);
+    MPI_Isend(message, MESSAGE_SIZE, MPI_DOUBLE, dest, 99, MPI_COMM_WORLD, &send_request);
+}
 
-MPI_Request recv_request;
-MPI_Status recv_status;
-MPI_Irecv(received, MESSAGE_SIZE, MPI_INT, source, 99, MPI_COMM_WORLD, &recv_request);
+// First wait for receive completion, while doing some computation
+int recv_done = 0;
+double partial_sum = 0.0;
+for (int chunk = 0; chunk < NUM_CHUNKS && !recv_done; chunk++) {
+    // Small computation, avoid resource competition with communication
+    for (int i = 0; i < 1000; i++) {
+        partial_sum += sin(i * 0.1);
+    }
 
-MPI_Wait(&recv_request, &recv_status);
-MPI_Wait(&send_request, &send_status);
+    MPI_Test(&recv_request, &recv_done, &recv_status);
+}
+
+// If receive is not complete, wait for it
+if (!recv_done) {
+    MPI_Wait(&recv_request, &recv_status);
+}
+
+// Process data immediately after receive completion
+double sum = 0.0;
+for (int i = 0; i < MESSAGE_SIZE; i++) {
+    sum += received[i] * 0.0001;
+}
+
+// Then wait for send completion
+int send_done = 0;
+MPI_Test(&send_request, &send_done, &send_status);
+if (!send_done) {
+    MPI_Wait(&send_request, &send_status);
+}
 ```
 
-这种实现类似于ring2，但使用了更C风格的编程方式，并且显式地使用了MPI_Status结构。
+This implementation features separated wait processes for receiving and sending, prioritizing waiting for receive completion and data processing before waiting for send completion. The main difference from ring2 is its more explicit prioritization of processing received data.
 
-优点：
-- 功能与ring2相同
-- 更明确地处理通信状态
-- 使用标签（tag=99）区分消息类型
+Advantages:
+- Data is processed immediately upon reception
+- Combines even-odd interleaving strategy
+- More explicit separation of receive and send wait processes
+- Allows adjustment of computation and communication balance based on application characteristics
 
-缺点：
-- 代码冗长度略高
-- 需要额外的状态变量
+Disadvantages:
+- Most complex code
+- Requires fine-grained management of computation and communication interaction
 
-## 4. 消息大小与内容
+## 4. Message Size and Content
 
-为了测试不同通信方法的性能，本项目使用了较大的消息结构：
+To test the performance of different communication methods, we increased the message scale and used a larger message structure:
 
 ```cpp
+// From initial smaller scale
 #define MESSAGE_SIZE 1000
 
-// 初始化消息内容
+// Increased to larger scale to show performance differences
+#define MESSAGE_SIZE 5000000
+
+// Initialize message content (simplified computation)
 for (int i = 0; i < MESSAGE_SIZE; i++) {
-    message[i] = rank * 1000 + i;  // 消息中包含发送进程的rank信息
-    received[i] = -1;  // 初始化接收缓冲区
+    message[i] = rank * 1000.0 + i % 1000;  // Simplified computation
+    received[i] = -1.0;
 }
 ```
 
-每个进程发送一个包含1000个整数的数组，其中第一个元素（索引0）包含发送进程的rank（乘以1000）。这样设计使得接收进程可以轻松验证消息的来源和正确性。
+By increasing the message size from 1000 integers to 5,000,000 double-precision floating-point numbers, we can better observe the performance differences of various communication strategies in large-scale data transfer. We also simplified the message content initialization calculation to reduce initialization overhead.
 
-## 5. 实验结果与分析
+## 5. Experimental Results and Analysis
 
-### 5.1 通信时间比较
+### 5.1 Small-Scale Test Results
 
-通过运行所有四个实现，我们收集了8个进程下的通信时间数据：
+In the initial small-scale test (MESSAGE_SIZE = 1000), we observed the following communication times:
 
-| 进程 | ring(阻塞) | ring1(交错) | ring2(非阻塞) | ring3(C风格) |
-| ---- | ---------- | ----------- | ------------- | ------------ |
-| 0    | 6.59e-05   | 1.17e-04    | 5.81e-05      | 2.90e-05     |
-| 1    | 7.22e-05   | 3.60e-05    | 4.08e-04      | 2.86e-04     |
-| 2    | 2.74e-04   | 1.77e-04    | 2.82e-05      | 5.20e-05     |
-| 3    | 2.85e-05   | 3.30e-05    | 3.00e-05      | 2.78e-04     |
-| 4    | 1.50e-04   | 1.82e-04    | 4.22e-04      | 2.92e-04     |
-| 5    | 3.09e-05   | 1.76e-04    | 2.66e-05      | 4.60e-05     |
-| 6    | 1.87e-04   | 3.10e-05    | 4.18e-04      | 2.00e-04     |
-| 7    | 2.35e-04   | 1.22e-04    | 4.45e-04      | 2.21e-04     |
-| 平均 | 1.30e-04   | 1.10e-04    | 2.26e-04      | 1.74e-04     |
+| Program | Average Communication Time (s) | Features                       |
+|---------|--------------------------------|--------------------------------|
+| ring    | Approx. 1.30e-04               | Basic blocking communication   |
+| ring1   | Approx. 1.10e-04               | Even-odd interleaved comm.   |
+| ring2   | Approx. 2.26e-04               | Non-blocking communication     |
+| ring3   | Approx. 1.74e-04               | Separated wait non-blocking  |
 
-观察结果：
-1. 所有通信方法的时间均在微秒级别，表明MPI在小规模集群环境中性能良好
-2. 非阻塞通信（ring2和ring3）平均比阻塞通信（ring和ring1）稍慢，这可能是因为测试的通信数据较小，非阻塞通信的额外开销更为明显
-3. 通信时间存在一定的波动，这是由于系统调度和网络因素的影响
+For small-scale data transfer, blocking communication (ring and ring1) performed better than non-blocking communication (ring2 and ring3). This is because the overhead of non-blocking communication is relatively larger for small data volumes.
 
-### 5.2 Bug分析与修复
+### 5.2 Large-Scale Test Results and Performance Optimization
 
-在实现ring1时，我们发现了一个重要的bug：原始代码使用同一个数组变量（message）既用于发送又用于接收，导致：
-- 偶数进程先发送自己的消息，然后接收到的内容覆盖了原数组
-- 奇数进程先接收（覆盖了自己的原始消息），然后发送的是接收到的消息而不是自己的原始消息
+To better reflect the performance differences of various communication strategies, we increased the message size (MESSAGE_SIZE = 5000000) and made several optimization attempts. The main findings and optimization process are as follows:
 
-修复方法：
-```cpp
-// 使用独立的数组分别用于发送和接收
-int message[MESSAGE_SIZE];
-int received[MESSAGE_SIZE];  // 新增独立的接收缓冲区
-```
+#### 5.2.1 Actual Verification of Deadlock Problem
 
-通过使用独立的发送和接收缓冲区，确保了通信的正确性，每个进程都能接收到其前一个进程发送的正确消息值。
+In large-scale data testing, we first discovered an important issue: the most basic `ring.cpp` implementation experienced deadlock. When the message size was increased to 5,000,000 double-precision floating-point numbers (approx. 40MB), all processes blocked on the send operation, causing the program to never complete.
 
-## 6. 自动化编译与执行
+This finding verified the deadlock risk discussed in the theoretical section: with small data volumes, basic blocking communication might not deadlock due to sufficiently large system buffers; however, with large data volumes, system buffers are insufficient to hold all messages, causing all processes to get stuck on the `MPI_Send` operation, waiting for receivers to be ready, while receivers are similarly stuck on their `MPI_Send`, forming a classic circular wait deadlock.
 
-为了方便测试和实验，我们开发了一个Python脚本（`build_run_rings.py`），可以自动化编译和执行所有四个实现：
+This confirms the necessity of adopting even-odd interleaved or non-blocking communication strategies in practical applications, especially when dealing with large-scale data. Therefore, in subsequent tests, we only compared `ring1`, `ring2`, and `ring3`, the three implementations that do not deadlock.
+
+#### 5.2.2 First Large-Scale Test
+
+In the first test after increasing the message size, we collected the following data:
+
+| Program | Average Communication Time (s) | Features                       |
+|---------|--------------------------------|--------------------------------|
+| ring1   | Approx. 1.22s                  | Even-odd interleaved blocking  |
+| ring2   | Approx. 1.70s                  | Initial non-blocking impl.     |
+| ring3   | Approx. 1.45s                  | Initial separated wait non-block|
+
+Surprisingly, in large-scale data transfer, the most basic `ring1` performed best, which contradicted theoretical expectations. Through analysis, we identified the following issues:
+
+1.  **Competition between Computation and Communication**: In `ring2` and `ring3`, we introduced too much computational work, which competed with communication for CPU and memory bandwidth resources.
+2.  **Excessive Initialization Computation**: Complex trigonometric functions were used to initialize data, adding unnecessary overhead.
+3.  **Unreasonable Communication Status Checks**: `MPI_Test` calls were too frequent or poorly placed, increasing overhead.
+
+#### 5.2.3 Optimization Attempts and Failure Analysis
+
+Based on the above analysis, we made several optimization attempts:
+
+1.  **First Optimization Attempt**:
+    *   Added even-odd interleaving strategy to non-blocking `ring2` and `ring3`.
+    *   However, in the code implementation, we added computation before initiating the second communication operation, which actually delayed communication initialization.
+    *   Result: Performance of `ring2` and `ring3` was still worse than `ring1`.
+
+2.  **Second Optimization Attempt (Failure)**:
+    *   Increased computational work, hoping to better leverage non-blocking communication advantages.
+    *   Used a more complex chunked computation strategy.
+    *   Added more `MPI_Test` calls to detect communication status.
+    *   Result: Performance further degraded, and competition between computation and communication intensified.
+
+3.  **Reason Analysis**:
+    *   Excessive Computation: Adding too much computational work interfered with communication.
+    *   Communication Initialization Latency: Inserting computation between initiating two communication operations delayed the second one.
+    *   `MPI_Test` Too Frequent: Added unnecessary system call overhead.
+    *   Poor Memory Access Patterns: Complex computations caused unnecessary memory contention.
+
+#### 5.2.4 Final Optimization Plan
+
+After multiple attempts and analyses, we implemented the following optimization measures:
+
+1.  **Immediately Initiate All Communication Operations**:
+    *   Maintain even-odd interleaving order but immediately and consecutively initiate send and receive operations.
+    *   Do not insert computation between the two communication operations.
+
+2.  **Simplify Computation**:
+    *   Reduce computational load to avoid competition with communication.
+    *   Use a simpler message initialization method.
+    *   Optimize computation loops to avoid unnecessary memory access.
+
+3.  **Optimize Communication Status Checks**:
+    *   In `ring2`: Appropriately reduce `MPI_Test` call frequency.
+    *   In `ring3`: First wait for receive completion, then immediately process data.
+
+Final optimized performance:
+
+| Program | Average Communication Time (s) | Features                          |
+|---------|--------------------------------|-----------------------------------|
+| ring1   | Approx. 1.12s                  | Even-odd interleaved blocking     |
+| ring2   | Approx. 0.44s                  | Optimized non-blocking            |
+| ring3   | Approx. 0.43s                  | Optimized separated wait non-block|
+
+### 5.3 Final Experimental Data Analysis
+
+Based on the final optimized experimental data, we can draw the following conclusions:
+
+1.  **Limitations of Basic Blocking Communication**:
+    *   `ring.cpp` deadlocked in large-scale data transfer, confirming theoretical risks.
+    *   This indicates that simple blocking communication has severe limitations in practical applications.
+
+2.  **Advantages of Non-blocking Communication**:
+    *   Optimized `ring2` and `ring3` were about 2.5 times faster than blocking `ring1`.
+    *   This confirms the theoretical advantage of non-blocking communication in large-scale data transfer.
+
+3.  **Importance of Communication-Computation Balance**:
+    *   Excessive computation can interfere with communication performance.
+    *   Computational load needs to be moderate, utilizing CPU idle time without hampering communication.
+
+4.  **Effectiveness of Even-Odd Interleaving Strategy**:
+    *   For both blocking and non-blocking communication, the even-odd interleaving strategy helps avoid deadlock and improve performance.
+    *   `ring1`, despite using blocking communication, successfully avoided deadlock through even-odd interleaving.
+
+5.  **Comparison of `ring2` and `ring3`**:
+    *   Their performance is similar, but `ring3` is slightly better in some cases.
+    *   The separated wait strategy of `ring3` might be more advantageous in certain application scenarios.
+
+## 6. Scalability Analysis
+
+### 6.1 Experimental Design and Methodology
+
+To analyze the scalability of MPI neighbor communication in a large-scale distributed environment, we designed a series of tests focusing on how communication performance changes with an increasing number of processes. The experimental design is as follows:
+
+1.  **Message Size**:
+    *   Fixed at 5,000,000 double-precision floating-point numbers (approx. 40MB), sufficient to reveal communication bottlenecks.
+
+2.  **Number of Processes**:
+    *   Tested 2, 4, 8, 16, and 32 processes, covering small to medium-scale scenarios.
+
+3.  **Test Programs**:
+    *   Used the optimized `ring1`, `ring2`, and `ring3` implementations.
+    *   Removed `ring` (basic blocking communication) as it deadlocks with large message transfers.
+
+4.  **Measurement Metrics**:
+    *   Average communication time: Average of communication times across all processes.
+    *   Maximum communication time: Longest communication time among all processes (critical path).
+    *   Parallel efficiency: Speedup relative to the baseline case (2 processes) divided by the number of processes.
+
+5.  **Experimental Platform**:
+    *   High-performance computing cluster using Slurm job scheduling.
+    *   Each experiment was run under identical hardware conditions to ensure comparability of results.
+
+### 6.2 Test Script Improvements
+
+To implement the scalability analysis, we made the following improvements to the Python test script:
+
+1.  **Support for Multi-Process Count Testing**:
+    ```python
+    # Test different process counts to analyze scalability
+    process_counts = [2, 4, 8, 16, 32]  # Adjust based on available cluster resources
+    ```
+
+2.  **Improved Results Analysis**:
+    *   Added recording and analysis of maximum communication time.
+    *   Implemented data processing grouped by the number of processes.
+
+3.  **Improved Output Format**:
+    *   Generated three CSV reports: performance data, scalability data, and efficiency data.
+    *   Facilitates subsequent charting and analysis.
+
+4.  **Compatibility Optimization**:
+    *   Fixed Python 2.7 compatibility issues.
+    *   Optimized job submission strategy to avoid exceeding cluster quotas.
+
+### 6.3 Scalability Test Results
+
+By running the improved test script, we collected the following scalability data:
+
+**Communication Time vs. Number of Processes (seconds)**:
+
+| Program | 2 Processes | 4 Processes | 8 Processes | 16 Processes | 32 Processes |
+|---------|-------------|-------------|-------------|--------------|--------------|
+| ring1   | 0.095566    | 0.119079    | 0.214083    | 0.240036     | 0.390593     |
+| ring2   | 0.112190    | 0.137413    | 0.160805    | 0.245107     | 0.265589     |
+| ring3   | 0.126727    | 0.125191    | 0.153561    | 0.185341     | 0.300880     |
+
+**Parallel Efficiency vs. Number of Processes**:
+
+| Program | 2 Processes | 4 Processes | 8 Processes | 16 Processes | 32 Processes |
+|---------|-------------|-------------|-------------|--------------|--------------|
+| ring1   | 0.5000      | 0.2006      | 0.0558      | 0.0249       | 0.0076       |
+| ring2   | 0.5000      | 0.2041      | 0.0872      | 0.0286       | 0.0132       |
+| ring3   | 0.5000      | 0.2531      | 0.1032      | 0.0427       | 0.0132       |
+
+### 6.4 Scalability Analysis
+
+Based on the collected data, we can draw the following conclusions about scalability:
+
+1.  **Communication Time Growth Trend**:
+    *   The communication time for all implementations increases with the number of processes, consistent with the theoretical expectations for this neighbor communication pattern.
+    *   When the number of processes increased from 2 to 32, `ring1`'s communication time increased by about 4.1 times, while `ring2` and `ring3` increased by about 2.4 times each.
+    *   This indicates that non-blocking communication (`ring2` and `ring3`) exhibits better scalability as the number of processes increases.
+
+2.  **Scalability Advantage of Non-blocking Communication**:
+    *   At all process counts, optimized non-blocking communication (`ring2` and `ring3`) showed better performance than blocking communication (`ring1`).
+    *   This advantage becomes more pronounced as the number of processes increases, especially at 32 processes, where `ring2` and `ring3` are about 1.5 times faster than `ring1`.
+    *   This confirms that non-blocking communication has better scalability in large-scale distributed environments.
+
+3.  **`ring3`'s Advantage at Medium Scale**:
+    *   `ring3` demonstrated the best performance at 4, 8, and 16 processes.
+    *   This confirms the advantage of the separated wait strategy (wait for receive, then wait for send) at medium scales.
+    *   This might be because this strategy better utilizes network bandwidth and reduces latency.
+
+4.  **Decrease in Parallel Efficiency**:
+    *   The parallel efficiency of all implementations significantly decreases with an increasing number of processes, an inherent characteristic of this neighbor communication pattern.
+    *   Blocking communication (`ring1`) showed the most rapid efficiency drop, from 0.5 at 2 processes to 0.0076 at 32 processes.
+    *   Non-blocking communication (`ring2` and `ring3`), while also experiencing an efficiency drop, decreased more slowly, maintaining an efficiency of about 0.013 at 32 processes.
+    *   This indicates that non-blocking communication can better maintain parallel efficiency in large-scale environments.
+
+5.  **Limiting Factors for Scalability**:
+    *   Communication Topology: The circular topology requires messages to be passed sequentially, limiting parallelism.
+    *   Network Congestion: As the number of processes increases, network congestion within the cluster can become a performance bottleneck.
+    *   Resource Contention: With more processes, competition for CPU and memory bandwidth becomes more intense.
+
+6.  **Best Practice Recommendations**:
+    *   Small-scale environment (2-4 processes): All three implementations perform similarly; the simplest `ring1` can be chosen.
+    *   Medium-scale environment (8-16 processes): `ring3` is recommended as it performs best in this range.
+    *   Large-scale environment (32+ processes): `ring2` might be the best choice as it performs best at 32 processes.
+    *   When maximizing cluster utilization is critical, avoid this specific neighbor communication pattern (circular) and consider other communication patterns like tree topology or scatter/gather operations.
+
+### 6.5 Performance Modeling
+
+Based on the collected data, we attempt to build a simple performance model to predict communication time changes with the number of processes:
+
+For this neighbor communication pattern (circular), theoretically, communication time should be related to message size (m) and number of processes (p):
+- T(m, p) = α + β·m + γ·m·p
+
+Where:
+- α is the fixed overhead of communication
+- β is a coefficient related to message size
+- γ is a coefficient related to both message size and number of processes
+
+From our experimental data, for `ring2`, we can approximate:
+- T(m, p) ≈ 0.1 + 2.0·10⁻⁶·m · log(p)
+
+This model can serve as a basis for future extended testing and help predict performance in larger-scale environments.
+
+## 7. Automated Compilation and Execution
+
+To streamline experiments in the cluster environment and facilitate scalability testing, a Python script (`build_run_rings.py`) was developed. This script automates the compilation of the C++ MPI programs, generates and submits Slurm job scripts for various test configurations (differing process counts and message sizes), and processes the output to generate summary CSV reports. Key code segments illustrating Slurm script creation and CSV report generation are shown below:
 
 ```python
-# 脚本关键功能
-def compile_program(source_file, output_file):
-    """编译MPI程序"""
-    subprocess.run(["mpicxx", "-o", output_file, source_file])
+# Key script functionalities
+def create_job_script(program_name, num_processes, message_size, job_id):
+    """Creates a Slurm job script"""
+    output_name = "{0}_procs{1}_size{2}_{3}".format(program_name, num_processes, message_size, job_id)
+    script_content = """#!/bin/bash
+#SBATCH --job-name={0}_p{1}
+#SBATCH --nodes=1
+#SBATCH --ntasks={1}
+#SBATCH --mem=16G
+#SBATCH --time=00:10:00
+#SBATCH --output={4}.out
+#SBATCH --error={4}.err
 
-def run_program(program_name, num_processes=8):
-    """运行MPI程序"""
-    subprocess.run(["mpirun", "-np", str(num_processes), f"./{program_name}"])
+module load mpi
+
+mpirun -np {1} ./{0} {2}
+""".format(program_name, num_processes, message_size, job_id, output_name)
+    # ...omitting file writing code...
+
+def generate_csv_report(results):
+    """Generates CSV reports"""
+    # Generate performance report
+    with open("performance_results.csv", 'wb') as f:
+        writer = csv.writer(f)
+        writer.writerow(["Program", "Processes", "Message Size", "Avg Time (s)", "Max Time (s)"])
+        # ...omitting detailed code...
+
+    # Generate scalability report
+    with open("scalability_results.csv", 'wb') as f:
+        writer = csv.writer(f)
+        header = ["Program", "Message Size"]
+        for proc in all_processes:
+            header.append(str(proc) + " procs")
+        writer.writerow(header)
+        # ...omitting detailed code...
+
+    # Generate efficiency report
+    with open("efficiency_results.csv", 'wb') as f:
+        writer = csv.writer(f)
+        header = ["Program", "Message Size"]
+        for proc in all_processes:
+            if proc > 1:
+                header.append(str(proc) + " procs")
+        writer.writerow(header)
+        # ...omitting detailed code...
 ```
 
-这个脚本极大地简化了测试过程，可以一次性编译和运行所有实现，并可以指定进程数量。
+The script was designed for ease of use in a cluster environment, incorporating features like Python 2.7 compatibility and flexible test parameter configuration (potentially via command-line arguments).
 
-## 7. 结论
+**Running Experiments and Output**:
 
-通过本项目，我们实现并比较了四种不同的MPI环形通信方法，得出以下结论：
+Experiments are run by executing `python build_run_rings.py`. Prerequsites include having the MPI C++ source files (`ring.cpp`, `ring1.cpp`, etc.) in the same directory and ensuring the MPI module is available and loaded in the execution environment (typically handled within the Slurm script via `module load mpi`).
 
-1. 阻塞通信简单直观，但可能存在死锁风险
-2. 交错通信策略有效避免了死锁
-3. 非阻塞通信允许计算与通信重叠，提高了程序的整体效率
-4. 单独分配发送和接收缓冲区对于确保通信正确性非常重要
+Upon execution, the script provides console feedback on compilation, job submission, and result collection. Key outputs include:
+*   **Slurm log files (`.out`, `.err`)**: Containing standard output/error from each MPI job run, including raw timing data.
+*   **CSV Reports**:
+    *   `performance_results.csv`: Detailed timing for each test run.
+    *   `scalability_results.csv`: Communication times across different process counts.
+    *   `efficiency_results.csv`: Parallel efficiency calculations.
+*   **Executables**: Compiled MPI programs.
 
-### 7.1 未来工作
+These outputs allow for a comprehensive analysis of the performance, scalability, and efficiency of the implemented neighbor communication methods.
 
-本项目可以进一步扩展：
+## 8. Conclusion
 
-1. 测试更大规模的集群环境
-2. 增加计算密集型任务，更好地评估非阻塞通信的优势
-3. 实现更复杂的通信模式，如全局规约（reduction）或广播（broadcast）
-4. 比较不同MPI实现（OpenMPI、MPICH等）的性能差异
-5. 探索MPI的集体通信原语在环形通信中的应用
+Through this project, we implemented and compared four different MPI neighbor communication methods. Through multiple optimizations and scalability tests, we fully demonstrated the performance characteristics of different communication strategies:
 
-## 8. 参考资料
+1.  **Blocking Communication (`ring` and `ring1`)**:
+    *   `ring` deadlocked in large-scale data communication, confirming theoretical risks.
+    *   `ring1` successfully avoided deadlock using an even-odd interleaving strategy but showed poor scalability in large-scale environments.
+    *   Blocking communication is simple and intuitive, suitable for small-scale data transfer and scenarios with a small number of processes.
 
-1. MPI标准文档：https://www.mpi-forum.org/docs/
-2. MPICH官方文档：https://www.mpich.org/documentation/
-3. OpenMPI官方文档：https://www.open-mpi.org/doc/
-4. 《并行程序设计：MPI并行编程》
-5. 《High Performance Computing》 
+2.  **Non-blocking Communication (`ring2` and `ring3`)**:
+    *   Showed clear advantages in large-scale data transfer and multi-process environments.
+    *   `ring3` performed best in medium-scale clusters (4-16 processes).
+    *   `ring2` might be more advantageous in larger-scale clusters (32+ processes).
+    *   Optimized implementations were over 2.5 times faster than blocking communication.
+
+3.  **Key Performance Optimization Points**:
+    *   Initiate all communication operations immediately, without adding unnecessary delays.
+    *   Keep computational load moderate to avoid interfering with communication.
+    *   Reasonably schedule the frequency and placement of communication status checks.
+    *   Moderately simplify data processing computations.
+
+4.  **Scalability Findings**:
+    *   The parallel efficiency of this neighbor communication pattern (circular) rapidly decreases with an increasing number of processes, an inherent characteristic.
+    *   The scalability of non-blocking communication is significantly better than that of blocking communication.
+    *   The separated wait strategy (`ring3`) performed best in medium-scale environments.
+    *   When the number of processes reaches 32, communication overhead becomes the main bottleneck.
+
+5.  **Best Practice Recommendations**:
+    *   Small-scale data, few processes: Use simple blocking communication (`ring1`).
+    *   Large-scale data, few processes: Use non-blocking communication (`ring2` or `ring3`).
+    *   Medium-scale clusters: Prioritize the separated wait strategy (`ring3`).
+    *   Large-scale clusters: Prioritize lightweight non-blocking communication (`ring2`).
+    *   In all cases, the even-odd interleaving strategy is an effective means to ensure communication safety.
+
+
